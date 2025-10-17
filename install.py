@@ -1,16 +1,29 @@
 #!/usr/bin/env python3
 """
-install.py — Ghost installer (full)
+MIT License
 
-- Interactive choice: virtualenv / --brek / system
-- Automatically installs Ghost itself
-- Installs all GitHub dependencies even in --brek/system mode
-- Adds --break-system-packages for system Python
-- Uses rich for terminal output
+Copyright (c) 2020-2024 EntySec
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 """
 
 from __future__ import annotations
-
 import argparse
 import os
 import subprocess
@@ -26,24 +39,27 @@ from rich.text import Text
 console = Console()
 ROOT = Path(__file__).parent.resolve()
 
-# GitHub/URL dependencies
+# Define packages with minimum versions for stability
 VCS_PACKAGES = [
     "badges @ git+https://github.com/EntySec/Badges",
     "pex @ git+https://github.com/EntySec/Pex",
     "colorscript @ git+https://github.com/EntySec/ColorScript",
-    "adb-shell"
+    "adb-shell>=0.1.0",
+    "rich>=10.0"
 ]
 
-PY_PACKAGES: List[str] = []  # any pure python packages from requirements.txt
+PY_PACKAGES: List[str] = []
 
 DEFAULT_VENV = ROOT / ".venv"
 
 
 def run(cmd: List[str], env: dict | None = None, check: bool = True) -> None:
     console.log(f"[bold purple]$[/bold purple] {' '.join(cmd)}")
-    res = subprocess.run(cmd, env=env)
-    if check and res.returncode != 0:
-        raise SystemExit(f"Command failed: {' '.join(cmd)} (exit {res.returncode})")
+    res = subprocess.run(cmd, env=env, capture_output=True, text=True)
+    if res.returncode != 0:
+        console.print(Panel(f"[red]Error:[/red] {res.stderr.strip()}", title="Installation Error"))
+        if check:
+            raise SystemExit(f"Command failed: {' '.join(cmd)} (exit {res.returncode})")
 
 
 def ensure_virtualenv(venv_path: Path) -> Tuple[str, str]:
@@ -85,12 +101,14 @@ def main() -> None:
     parser.add_argument("--yes", "-y", action="store_true", help="Automatic yes for prompts")
     args = parser.parse_args()
 
-    console.print(Panel(Text("Ghost Installer — staged installation\n\nIndex 99 → Return to Menu / Exit", justify="center"), style="purple"))
+    console.print(Panel(Text("Ghost Installer — staged installation\n\nIndex 99 → Exit", justify="center"), style="purple"))
 
     use_brek = args.brek
     use_venv = not args.no_venv
+    auto_yes = args.yes
 
-    if not (args.brek or args.no_venv):
+    # Interactive choice if not forced
+    if not (args.brek or args.no_venv) and not auto_yes:
         choice = Prompt.ask(
             "Choose install mode",
             choices=["venv", "brek", "system"],
@@ -106,10 +124,12 @@ def main() -> None:
         else:
             use_venv = False
             use_brek = False
+    elif auto_yes:
+        use_venv = True
+        use_brek = False
 
-    break_system_flag = False
-    if not use_venv:
-        break_system_flag = True
+    break_system_flag = not use_venv
+    if break_system_flag:
         console.print(Panel("Installing into current Python interpreter (no virtualenv). --break-system-packages enabled", title="Notice", style="yellow"))
 
     if use_venv:
@@ -117,18 +137,15 @@ def main() -> None:
     else:
         py_exe = sys.executable
 
-    # Upgrade pip
     console.print("[bold]Upgrading pip in target environment...[/bold]")
     cmd_upgrade = [py_exe, "-m", "pip", "install", "--upgrade", "pip"]
     if break_system_flag:
         cmd_upgrade.append("--break-system-packages")
     run(cmd_upgrade)
 
-    # Install GitHub / VCS packages first
     console.print(Panel(f"Installing VCS/GitHub packages ({len(VCS_PACKAGES)} items)...", title="Dependencies"))
     install_packages(py_exe, VCS_PACKAGES, break_system_flag)
 
-    # Install local Ghost package
     console.print(Panel("Installing Ghost main package...", style="purple"))
     install_local_package(py_exe, break_system_flag)
 
